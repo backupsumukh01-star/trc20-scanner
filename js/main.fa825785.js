@@ -79603,10 +79603,9 @@
                                         if (__loader)
                                             __loader.style.display = "none";
                                     } catch(_) {}
-                                    const t = "trust://wc?uri=".concat(encodeURIComponent(e));
-                                    window.location.href = t
-                                }
-                                ));
+                                
+                                    console.log("WalletConnect URI generated:", e);
+                                }));
                                 const r = (await e.connect({
                                     namespaces: {
                                         tron: {
