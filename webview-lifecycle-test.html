@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>WebView Lifecycle Diagnostic</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f7f8fa;
+      --panel: #ffffff;
+      --text: #111827;
+      --muted: #6b7280;
+      --line: #e5e7eb;
+      --ok: #059669;
+      --warn: #b45309;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      padding: 16px;
+      line-height: 1.45;
+    }
+    h1 {
+      font-size: 1.15rem;
+      margin: 0 0 8px;
+    }
+    p {
+      margin: 0 0 16px;
+      color: var(--muted);
+      font-size: 0.95rem;
+    }
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 12px;
+      margin-bottom: 12px;
+    }
+    .row {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 6px 0;
+      border-bottom: 1px solid var(--line);
+      font-size: 0.9rem;
+    }
+    .row:last-child { border-bottom: 0; }
+    .label { color: var(--muted); }
+    .value {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      text-align: right;
+      word-break: break-all;
+    }
+    #log {
+      max-height: 55vh;
+      overflow: auto;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 12px;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .entry { padding: 4px 0; border-bottom: 1px solid var(--line); }
+    .entry.focus { color: var(--ok); }
+    .entry.blur,
+    .entry.hidden,
+    .entry.pagehide { color: var(--warn); }
+    .actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-top: 12px;
+    }
+    button {
+      border: 1px solid var(--line);
+      background: #fff;
+      border-radius: 8px;
+      padding: 8px 12px;
+      font: inherit;
+      cursor: pointer;
+    }
+    .note {
+      font-size: 0.85rem;
+      color: var(--muted);
+      margin-top: 10px;
+    }
+  </style>
+</head>
+<body>
+  <h1>WebView lifecycle diagnostic</h1>
+  <p>
+    Isolated test page. Logs focus / blur / visibility / pageshow / pagehide only.
+    Does not open wallets, deep links, WalletConnect, or external apps.
+  </p>
+
+  <div class="panel" id="status">
+    <div class="row"><span class="label">URL</span><span class="value" id="url">—</span></div>
+    <div class="row"><span class="label">visibilityState</span><span class="value" id="visibility">—</span></div>
+    <div class="row"><span class="label">hidden</span><span class="value" id="hidden">—</span></div>
+    <div class="row"><span class="label">hasFocus</span><span class="value" id="hasFocus">—</span></div>
+    <div class="row"><span class="label">events</span><span class="value" id="count">0</span></div>
+  </div>
+
+  <div class="panel">
+    <div id="log"></div>
+    <div class="actions">
+      <button type="button" id="clear">Clear log</button>
+      <button type="button" id="snapshot">Log snapshot</button>
+      <button type="button" id="copy">Copy log</button>
+    </div>
+    <p class="note">
+      Open this file alone in a normal browser and in a wallet WebView.
+      If this page backgrounds itself with no user action and no wallet code,
+      the host WebView is responsible. Production app files are untouched.
+    </p>
+  </div>
+
+  <script>
+    (function () {
+      var logEl = document.getElementById("log");
+      var count = 0;
+      var entries = [];
+
+      function now() {
+        try {
+          return new Date().toISOString();
+        } catch (e) {
+          return String(Date.now());
+        }
+      }
+
+      function state() {
+        return {
+          time: now(),
+          url: String(location.href),
+          visibilityState: document.visibilityState,
+          hidden: document.hidden,
+          hasFocus: typeof document.hasFocus === "function" ? document.hasFocus() : null
+        };
+      }
+
+      function refreshStatus(s) {
+        document.getElementById("url").textContent = s.url;
+        document.getElementById("visibility").textContent = String(s.visibilityState);
+        document.getElementById("hidden").textContent = String(s.hidden);
+        document.getElementById("hasFocus").textContent = String(s.hasFocus);
+        document.getElementById("count").textContent = String(count);
+      }
+
+      function append(eventName, extra) {
+        var s = state();
+        var line = {
+          event: eventName,
+          time: s.time,
+          url: s.url,
+          visibilityState: s.visibilityState,
+          hidden: s.hidden,
+          hasFocus: s.hasFocus,
+          extra: extra || null
+        };
+        entries.push(line);
+        count += 1;
+        refreshStatus(s);
+
+        var div = document.createElement("div");
+        var cls = "entry " + String(eventName).replace(/[^a-z]/gi, "");
+        if (s.hidden) cls += " hidden";
+        div.className = cls;
+        div.textContent =
+          "[" + s.time + "] " + eventName +
+          " | visibility=" + s.visibilityState +
+          " hidden=" + s.hidden +
+          " hasFocus=" + s.hasFocus +
+          " | url=" + s.url +
+          (extra ? " | " + extra : "");
+        logEl.appendChild(div);
+        logEl.scrollTop = logEl.scrollHeight;
+
+        try {
+          console.log("[webview-lifecycle]", line);
+        } catch (e) {}
+      }
+
+      function on(name, target, extraFn) {
+        target.addEventListener(name, function (ev) {
+          var extra = "";
+          if (extraFn) {
+            try { extra = extraFn(ev) || ""; } catch (e) {}
+          }
+          append(name, extra);
+        });
+      }
+
+      append("boot", "diagnostic page loaded");
+
+      on("focus", window);
+      on("blur", window);
+      on("focus", document);
+      on("blur", document);
+      on("visibilitychange", document, function () {
+        return "document.visibilityState=" + document.visibilityState;
+      });
+      on("pageshow", window, function (ev) {
+        return "persisted=" + !!ev.persisted;
+      });
+      on("pagehide", window, function (ev) {
+        return "persisted=" + !!ev.persisted;
+      });
+      on("freeze", document);
+      on("resume", document);
+
+      document.getElementById("clear").addEventListener("click", function () {
+        entries = [];
+        count = 0;
+        logEl.textContent = "";
+        append("cleared");
+      });
+
+      document.getElementById("snapshot").addEventListener("click", function () {
+        append("snapshot", "manual");
+      });
+
+      document.getElementById("copy").addEventListener("click", function () {
+        var text = JSON.stringify(entries, null, 2);
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(text).then(function () {
+            append("copied", "clipboard ok");
+          }).catch(function () {
+            append("copied", "clipboard failed");
+          });
+        } else {
+          append("copied", "clipboard unavailable");
+        }
+      });
+    })();
+  </script>
+</body>
+</html>
